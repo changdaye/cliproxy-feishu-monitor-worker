@@ -16,6 +16,7 @@ export function parseConfig(env: Env): MonitorConfig {
     heartbeatIntervalHours: toInt(env.HEARTBEAT_INTERVAL_HOURS, 3, 1),
     summaryIntervalHours: toInt(env.SUMMARY_INTERVAL_HOURS, 6, 1),
     startupNotificationEnabled: toBoolean(env.STARTUP_NOTIFICATION_ENABLED, true),
-    runSummaryOnStartup: toBoolean(env.RUN_SUMMARY_ON_STARTUP, true)
+    runSummaryOnStartup: toBoolean(env.RUN_SUMMARY_ON_STARTUP, true),
+    manualTriggerToken: env.MANUAL_TRIGGER_TOKEN?.trim() ?? ""
   };
 }

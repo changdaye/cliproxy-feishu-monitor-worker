@@ -2,6 +2,7 @@ import { parseConfig } from "./config";
 import { chunkItems } from "./lib/chunk";
 import { buildFailureAlertText, buildHeartbeatText, buildStartupText, buildSummaryText } from "./lib/message";
 import { parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
+import { authorizeAdminRequest } from "./lib/admin";
 import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, createRun, createChunks, markRunRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
 import { CliProxyClient } from "./services/cliproxy";
 import { pushToFeishu } from "./services/feishu";
@@ -18,16 +19,16 @@ function shouldSendByInterval(last: string | undefined, hours: number, now = new
   return now.getTime() >= previous.getTime() + hours * 60 * 60 * 1000;
 }
 
-async function maybeFinalizeRun(env: Env, client: CliProxyClient, now = new Date()): Promise<boolean> {
+async function maybeFinalizeRun(env: Env, now = new Date()): Promise<{ handled: boolean; state: string; runId?: string }> {
   const run = await getIncompleteRun(env.MONITOR_DB);
-  if (!run) return false;
+  if (!run) return { handled: false, state: "idle" };
   const counts = await countChunkStatuses(env.MONITOR_DB, run.id);
   if ((counts.pending ?? 0) > 0 || (counts.queued ?? 0) > 0 || (counts.running ?? 0) > 0) {
-    return true;
+    return { handled: true, state: "waiting_for_chunks", runId: run.id };
   }
   if ((counts.failed ?? 0) > 0) {
     await markRunFailed(env.MONITOR_DB, run.id, "one or more chunks failed", now);
-    return true;
+    return { handled: true, state: "run_failed", runId: run.id };
   }
   const reports = await listReportsForRun(env.MONITOR_DB, run.id);
   const usagePayload = run.usagePayloadJson ? JSON.parse(run.usagePayloadJson) as Record<string, unknown> : {};
@@ -43,33 +44,35 @@ async function maybeFinalizeRun(env: Env, client: CliProxyClient, now = new Date
   runtime.lastError = undefined;
   runtime.consecutiveFailures = 0;
   await setRuntimeStatus(env.MONITOR_DB, runtime, now);
-  return true;
+  return { handled: true, state: "finalized", runId: run.id };
 }
 
-async function maybeSendStartup(env: Env, now = new Date()): Promise<void> {
+async function maybeSendStartup(env: Env, now = new Date()): Promise<boolean> {
   const config = parseConfig(env);
-  if (!config.startupNotificationEnabled) return;
+  if (!config.startupNotificationEnabled) return false;
   const runtime = await getRuntimeStatus(env.MONITOR_DB);
-  if (runtime.startupNotifiedAt) return;
+  if (runtime.startupNotifiedAt) return false;
   await pushToFeishu(config, buildStartupText(config));
   runtime.startupNotifiedAt = isoNow(now);
   await setRuntimeStatus(env.MONITOR_DB, runtime, now);
+  return true;
 }
 
-async function maybeSendHeartbeat(env: Env, now = new Date()): Promise<void> {
+async function maybeSendHeartbeat(env: Env, now = new Date()): Promise<boolean> {
   const config = parseConfig(env);
   const runtime = await getRuntimeStatus(env.MONITOR_DB);
-  if (!shouldSendByInterval(runtime.lastHeartbeatAt, config.heartbeatIntervalHours, now)) return;
+  if (!shouldSendByInterval(runtime.lastHeartbeatAt, config.heartbeatIntervalHours, now)) return false;
   await pushToFeishu(config, buildHeartbeatText(runtime, config.heartbeatIntervalHours));
   runtime.lastHeartbeatAt = isoNow(now);
   await setRuntimeStatus(env.MONITOR_DB, runtime, now);
+  return true;
 }
 
-async function startRun(env: Env, client: CliProxyClient, triggerType: string, now = new Date()): Promise<void> {
+async function startRun(env: Env, client: CliProxyClient, triggerType: string, now = new Date(), force = false): Promise<{ started: boolean; runId?: string; authCount?: number; chunkCount?: number }> {
   const config = parseConfig(env);
   const runtime = await getRuntimeStatus(env.MONITOR_DB);
-  if (!shouldSendByInterval(runtime.lastSummaryAt, config.summaryIntervalHours, now) && !(config.runSummaryOnStartup && !runtime.lastSummaryAt)) {
-    return;
+  if (!force && !shouldSendByInterval(runtime.lastSummaryAt, config.summaryIntervalHours, now) && !(config.runSummaryOnStartup && !runtime.lastSummaryAt)) {
+    return { started: false };
   }
   const auths = await client.loadCodexAuths();
   const usagePayload = await client.fetchUsagePayload();
@@ -97,6 +100,7 @@ async function startRun(env: Env, client: CliProxyClient, triggerType: string, n
     await env.MONITOR_QUEUE.send(message);
   }
   await markRunRunning(env.MONITOR_DB, runId);
+  return { started: true, runId, authCount: auths.length, chunkCount: messages.length };
 }
 
 async function handleFailure(env: Env, error: unknown, now = new Date()): Promise<void> {
@@ -128,24 +132,87 @@ async function processChunkMessage(env: Env, message: MonitorChunkMessage, now =
   }
 }
 
+async function runTick(env: Env, options: { forceStart: boolean; includeStartup: boolean; includeHeartbeat: boolean; triggerType: string }, now = new Date()) {
+  const client = new CliProxyClient(parseConfig(env));
+  const result = {
+    startupSent: false,
+    heartbeatSent: false,
+    action: "noop",
+    runId: undefined as string | undefined,
+    authCount: undefined as number | undefined,
+    chunkCount: undefined as number | undefined
+  };
+
+  if (options.includeStartup) {
+    result.startupSent = await maybeSendStartup(env, now);
+  }
+  if (options.includeHeartbeat) {
+    result.heartbeatSent = await maybeSendHeartbeat(env, now);
+  }
+
+  const finalized = await maybeFinalizeRun(env, now);
+  if (finalized.handled) {
+    result.action = finalized.state;
+    result.runId = finalized.runId;
+    return result;
+  }
+
+  const started = await startRun(env, client, options.triggerType, now, options.forceStart);
+  if (started.started) {
+    result.action = "started";
+    result.runId = started.runId;
+    result.authCount = started.authCount;
+    result.chunkCount = started.chunkCount;
+    return result;
+  }
+
+  return result;
+}
+
+function jsonError(status: number, error: string): Response {
+  return Response.json({ ok: false, error }, { status });
+}
+
 export default {
-  async fetch(_request: Request, env: Env): Promise<Response> {
-    const runtime = await getRuntimeStatus(env.MONITOR_DB);
-    return Response.json({ ok: true, runtime });
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
+      const runtime = await getRuntimeStatus(env.MONITOR_DB);
+      return Response.json({ ok: true, runtime });
+    }
+
+    if (request.method === "POST" && url.pathname === "/admin/tick") {
+      const auth = authorizeAdminRequest(request, parseConfig(env).manualTriggerToken);
+      if (!auth.ok) {
+        return jsonError(auth.status, auth.error ?? "unauthorized");
+      }
+      try {
+        const result = await runTick(env, {
+          forceStart: true,
+          includeStartup: false,
+          includeHeartbeat: false,
+          triggerType: "manual"
+        });
+        return Response.json({ ok: true, ...result });
+      } catch (error) {
+        await handleFailure(env, error);
+        return jsonError(500, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    return jsonError(404, "not found");
   },
 
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const client = new CliProxyClient(parseConfig(env));
-    const now = new Date();
     try {
-      await maybeSendStartup(env, now);
-      await maybeSendHeartbeat(env, now);
-      const hasActiveRun = await maybeFinalizeRun(env, client, now);
-      if (!hasActiveRun) {
-        await startRun(env, client, "scheduled", now);
-      }
+      await runTick(env, {
+        forceStart: false,
+        includeStartup: true,
+        includeHeartbeat: true,
+        triggerType: "scheduled"
+      });
     } catch (error) {
-      await handleFailure(env, error, now);
+      await handleFailure(env, error);
       throw error;
     }
   },

@@ -5,6 +5,7 @@ export interface Env {
   CPA_MANAGEMENT_KEY: string;
   FEISHU_WEBHOOK: string;
   FEISHU_SECRET?: string;
+  MANUAL_TRIGGER_TOKEN?: string;
   CHUNK_SIZE?: string;
   REQUEST_TIMEOUT_MS?: string;
   FAILURE_ALERT_THRESHOLD?: string;
@@ -26,6 +27,7 @@ export interface MonitorConfig {
   summaryIntervalHours: number;
   startupNotificationEnabled: boolean;
   runSummaryOnStartup: boolean;
+  manualTriggerToken: string;
 }
 
 export interface AuthItem {
