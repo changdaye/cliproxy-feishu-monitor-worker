@@ -1,0 +1,21 @@
+{
+  "name": "cliproxy-feishu-monitor-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker monitor for CLIProxyAPI quota and token usage Feishu notifications.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.14.9",
+    "@cloudflare/workers-types": "4.20260422.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.5",
+    "wrangler": "4.84.1"
+  }
+}

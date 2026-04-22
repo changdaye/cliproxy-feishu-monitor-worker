@@ -1,0 +1,36 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: '4'
+          secrets: |
+            CPA_BASE_URL
+            CPA_MANAGEMENT_KEY
+            FEISHU_WEBHOOK
+            FEISHU_SECRET
+            MANUAL_TRIGGER_TOKEN
+        env:
+          CPA_BASE_URL: ${{ secrets.CPA_BASE_URL }}
+          CPA_MANAGEMENT_KEY: ${{ secrets.CPA_MANAGEMENT_KEY }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          MANUAL_TRIGGER_TOKEN: ${{ secrets.MANUAL_TRIGGER_TOKEN }}
