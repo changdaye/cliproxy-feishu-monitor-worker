@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cliproxy-feishu-monitor-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-22",
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "MONITOR_DB",
+      "database_name": "cliproxy-feishu-monitor",
+      "database_id": "replace-with-d1-database-id",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MONITOR_QUEUE",
+        "queue": "cliproxy-feishu-monitor-queue"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "cliproxy-feishu-monitor-queue",
+        "max_batch_size": 4,
+        "max_batch_timeout": 10,
+        "max_retries": 3
+      }
+    ]
+  },
+  "vars": {
+    "CHUNK_SIZE": "20",
+    "REQUEST_TIMEOUT_MS": "30000",
+    "FAILURE_ALERT_THRESHOLD": "3",
+    "HEARTBEAT_INTERVAL_HOURS": "3",
+    "SUMMARY_INTERVAL_HOURS": "6",
+    "STARTUP_NOTIFICATION_ENABLED": "true",
+    "RUN_SUMMARY_ON_STARTUP": "true"
+  }
+}
