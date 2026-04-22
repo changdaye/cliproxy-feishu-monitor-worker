@@ -95,3 +95,52 @@ http://34.146.152.231.sslip.io:8317/management.html#/login
 后续更稳妥的长期方案仍然是：
 - 绑定自己的域名
 - 或使用 Cloudflare Tunnel + HTTPS hostname
+
+## Git 提交后自动部署
+
+这个项目已经提供 GitHub Actions 自动部署工作流：
+
+- 文件：`.github/workflows/deploy.yml`
+- 触发条件：
+  - push 到 `main`
+  - 或 GitHub Actions 页面手动 `Run workflow`
+
+### 你需要先做的事
+
+1. 把仓库推到 GitHub
+2. 在 GitHub 仓库里配置以下 **Repository secrets**：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CPA_BASE_URL`
+- `CPA_MANAGEMENT_KEY`
+- `FEISHU_WEBHOOK`
+- `FEISHU_SECRET`
+- `MANUAL_TRIGGER_TOKEN`
+
+### API Token 权限建议
+
+`CLOUDFLARE_API_TOKEN` 至少需要：
+- Workers: Edit
+- D1: Edit
+- Queues: Edit
+
+### 部署行为
+
+每次 push 到 `main` 时，GitHub Actions 会：
+
+1. `npm ci`
+2. `npm run check`
+3. 用 `cloudflare/wrangler-action@v3` 执行部署
+4. 把 GitHub Secrets 同步为 Worker secrets
+
+### 结果
+
+以后你只需要：
+
+```bash
+git add .
+git commit -m "..."
+git push origin main
+```
+
+GitHub 就会自动把最新代码部署到 Cloudflare Workers。
