@@ -102,10 +102,14 @@ function parseTimestamp(input: unknown): Date | undefined {
 }
 
 function tokenTotalFromDetail(detail: Record<string, unknown>): number {
-  const input = numberFromAny(firstValue(detail.input_tokens, detail.inputTokens, detail.prompt_tokens, detail.promptTokens));
-  const output = numberFromAny(firstValue(detail.output_tokens, detail.outputTokens, detail.completion_tokens, detail.completionTokens));
-  const total = numberFromAny(firstValue(detail.total_tokens, detail.totalTokens));
-  return total > 0 ? total : input + output;
+  const tokens = detail.tokens && typeof detail.tokens === "object" && !Array.isArray(detail.tokens)
+    ? detail.tokens as Record<string, unknown>
+    : detail;
+  const input = numberFromAny(firstValue(tokens.input_tokens, tokens.inputTokens, tokens.prompt_tokens, tokens.promptTokens));
+  const output = numberFromAny(firstValue(tokens.output_tokens, tokens.outputTokens, tokens.completion_tokens, tokens.completionTokens));
+  const reasoning = numberFromAny(firstValue(tokens.reasoning_tokens, tokens.reasoningTokens));
+  const total = numberFromAny(firstValue(tokens.total_tokens, tokens.totalTokens));
+  return total > 0 ? total : input + output + reasoning;
 }
 
 export function parseTokenUsageByAuth(payload: Record<string, unknown>, now = new Date()): TokenUsageResult {

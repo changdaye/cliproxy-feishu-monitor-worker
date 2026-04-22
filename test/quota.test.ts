@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveStatus, parseTokenUsageByAuth } from "../src/lib/quota";
+import { mapAuthEntry } from "../src/services/cliproxy";
 import type { QuotaReport } from "../src/types";
 
 function baseReport(): QuotaReport {
@@ -22,17 +23,40 @@ describe("deriveStatus", () => {
   });
 });
 
+describe("mapAuthEntry", () => {
+  it("extracts account id and plan type from id_token metadata", () => {
+    expect(
+      mapAuthEntry({
+        auth_index: "abc",
+        email: "a@example.com",
+        disabled: false,
+        status: "active",
+        id_token: {
+          chatgpt_account_id: "acc-123",
+          plan_type: "free"
+        }
+      })
+    ).toEqual({
+      authIndex: "abc",
+      accountId: "acc-123",
+      name: "a@example.com",
+      disabled: false,
+      planType: "free"
+    });
+  });
+});
+
 describe("parseTokenUsageByAuth", () => {
-  it("aggregates token usage by auth index", () => {
+  it("aggregates token usage by auth index from nested tokens payloads", () => {
     const result = parseTokenUsageByAuth({
       usage: {
         apis: {
           codex: {
             models: {
-              gpt: {
+              "gpt-5.4": {
                 details: [
-                  { auth_index: "a", timestamp: "2026-04-22T00:00:00.000Z", total_tokens: 10 },
-                  { auth_index: "a", timestamp: "2026-04-22T01:00:00.000Z", total_tokens: 20 }
+                  { auth_index: "a", timestamp: "2026-04-22T00:00:00.000Z", tokens: { total_tokens: 10 } },
+                  { auth_index: "a", timestamp: "2026-04-22T01:00:00.000Z", tokens: { input_tokens: 12, output_tokens: 3, reasoning_tokens: 5 } }
                 ]
               }
             }
