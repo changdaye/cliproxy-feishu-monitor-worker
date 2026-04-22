@@ -22,7 +22,7 @@ jobs:
           node-version: 25
           cache: npm
 
-      - run: npm ci
+      - run: npm install
       - run: npm run check
 
       - name: Deploy to Cloudflare Workers
