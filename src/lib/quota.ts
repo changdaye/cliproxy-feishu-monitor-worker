@@ -183,6 +183,19 @@ export function parseTokenUsageByAuth(payload: Record<string, unknown>, now = ne
   return result;
 }
 
+export function parseStoredTokenUsage(stored: string | undefined, now = new Date()): TokenUsageResult {
+  if (!stored) {
+    return { byAuth: {}, complete7Hours: false, complete24Hours: false, complete7Days: false };
+  }
+
+  const parsed = JSON.parse(stored) as Record<string, unknown>;
+  if ("byAuth" in parsed) {
+    return parsed as unknown as TokenUsageResult;
+  }
+
+  return parseTokenUsageByAuth(parsed, now);
+}
+
 export function summarizeReports(reports: QuotaReport[], tokenUsage: TokenUsageResult): Summary {
   const summary: Summary = {
     accounts: reports.length,

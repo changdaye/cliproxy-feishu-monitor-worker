@@ -3,10 +3,7 @@ import { formatNumberWithCommas } from "./value";
 
 export function buildSummaryText(summary: Summary, baseUrl: string, now = new Date()): string {
   const lines = [
-    "状态概览",
-    `来源: ${baseUrl}`,
-    `时间: ${now.toISOString().replace("T", " ").slice(0, 19)} UTC`,
-    "",
+    "状态概况",
     buildSnapshotLine(summary),
     "",
     "汇总",

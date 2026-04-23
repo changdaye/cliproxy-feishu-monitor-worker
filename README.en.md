@@ -127,8 +127,7 @@ For large account sets, multiple calls may be needed to complete a full run life
 ## Feishu notification content
 
 Current messages include:
-- source URL
-- run timestamp
+- status overview
 - account status distribution
 - token usage across 7h / 24h / 7d / all-time windows
 - heartbeat / failure alerts

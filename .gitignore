@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .wrangler/
+.omc/
 .dev.vars
 .env
 .DS_Store

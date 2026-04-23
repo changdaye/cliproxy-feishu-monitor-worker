@@ -1,7 +1,7 @@
 import { parseConfig } from "./config";
 import { chunkItems } from "./lib/chunk";
 import { buildFailureAlertText, buildHeartbeatText, buildStartupText, buildSummaryText } from "./lib/message";
-import { parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
+import { parseStoredTokenUsage, parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
 import { authorizeAdminRequest } from "./lib/admin";
 import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, createRun, createChunks, markRunRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
 import { CliProxyClient } from "./services/cliproxy";
@@ -35,8 +35,7 @@ async function maybeFinalizeRun(env: Env, now = new Date()): Promise<{ handled: 
     return { handled: true, state: "run_failed", runId: run.id };
   }
   const reports = await listReportsForRun(env.MONITOR_DB, run.id);
-  const usagePayload = run.usagePayloadJson ? JSON.parse(run.usagePayloadJson) as Record<string, unknown> : {};
-  const tokenUsage = parseTokenUsageByAuth(usagePayload, now);
+  const tokenUsage = parseStoredTokenUsage(run.usagePayloadJson, now);
   const summary = summarizeReports(reports, tokenUsage);
   const config = parseConfig(env);
   const message = buildSummaryText(summary, config.baseUrl, now);
@@ -80,6 +79,7 @@ async function startRun(env: Env, client: CliProxyClient, triggerType: string, n
   }
   const auths = await client.loadCodexAuths();
   const usagePayload = await client.fetchUsagePayload();
+  const tokenUsage = parseTokenUsageByAuth(usagePayload, now);
   const chunks = chunkItems(auths, config.chunkSize);
   const runId = crypto.randomUUID();
   const messages: MonitorChunkMessage[] = chunks.map((chunk, index) => ({
@@ -96,7 +96,7 @@ async function startRun(env: Env, client: CliProxyClient, triggerType: string, n
     triggerType,
     authCount: auths.length,
     chunkCount: messages.length,
-    usagePayloadJson: JSON.stringify(usagePayload),
+    usagePayloadJson: JSON.stringify(tokenUsage),
     now
   });
   await createChunks(env.MONITOR_DB, runId, messages, now);
