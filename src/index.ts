@@ -5,8 +5,12 @@ import { parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
 import { authorizeAdminRequest } from "./lib/admin";
 import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, createRun, createChunks, markRunRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
 import { CliProxyClient } from "./services/cliproxy";
-import { pushToFeishu } from "./services/feishu";
+import { pushToFeishu, isRateLimitError } from "./services/feishu";
 import type { Env, MonitorChunkMessage } from "./types";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function isoNow(now = new Date()): string {
   return now.toISOString();
@@ -110,7 +114,7 @@ async function handleFailure(env: Env, error: unknown, now = new Date()): Promis
   runtime.lastFailureAt = isoNow(now);
   runtime.lastError = error instanceof Error ? error.message : String(error);
   await setRuntimeStatus(env.MONITOR_DB, runtime, now);
-  if (runtime.consecutiveFailures >= config.failureAlertThreshold) {
+  if (runtime.consecutiveFailures >= config.failureAlertThreshold && !isRateLimitError(error)) {
     await pushToFeishu(config, buildFailureAlertText(runtime, config.failureAlertThreshold, runtime.lastError));
   }
 }
@@ -145,9 +149,11 @@ async function runTick(env: Env, options: { forceStart: boolean; includeStartup:
 
   if (options.includeStartup) {
     result.startupSent = await maybeSendStartup(env, now);
+    if (result.startupSent) await sleep(1500);
   }
   if (options.includeHeartbeat) {
     result.heartbeatSent = await maybeSendHeartbeat(env, now);
+    if (result.heartbeatSent) await sleep(1500);
   }
 
   const finalized = await maybeFinalizeRun(env, now);

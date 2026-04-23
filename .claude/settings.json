@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3 *)",
+      "Bash(gh api *)",
+      "Bash(npx tsc *)",
+      "Bash(npx wrangler *)"
+    ]
+  }
+}

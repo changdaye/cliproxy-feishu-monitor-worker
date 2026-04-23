@@ -1,6 +1,33 @@
 import type { MonitorConfig } from "../types";
 
+const MAX_RETRIES = 2;
+const BASE_DELAY_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /\b11232\b/.test(error.message) || /HTTP 429\b/.test(error.message);
+}
+
 export async function pushToFeishu(config: MonitorConfig, text: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await sendOnce(config, text);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRateLimitError(error) || attempt === MAX_RETRIES) throw error;
+      await sleep(BASE_DELAY_MS * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+async function sendOnce(config: MonitorConfig, text: string): Promise<void> {
   const payload = await buildPayload(text, config.feishuSecret);
   const response = await fetch(config.feishuWebhook, {
     method: "POST",
