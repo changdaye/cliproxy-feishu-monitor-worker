@@ -3,7 +3,7 @@
   "name": "cliproxy-feishu-monitor-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-22",
-  "account_id": "d66336592b3f62650da1e5fa60e4a28c",
+  "account_id": "6ef22eafdfaea04ccc59c7a4d85a087c",
   "workers_dev": true,
   "preview_urls": false,
   "observability": {
@@ -16,7 +16,7 @@
     {
       "binding": "MONITOR_DB",
       "database_name": "cliproxy-feishu-monitor",
-      "database_id": "13337ceb-8819-4e6d-833b-8dedc9b27248",
+      "database_id": "4a984cc6-786d-45de-b881-fd9f34d2f11b",
       "migrations_dir": "migrations"
     }
   ],

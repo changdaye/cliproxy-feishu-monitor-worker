@@ -141,7 +141,7 @@ curl http://127.0.0.1:8787/health
 ```bash
 curl -X POST \
   -H "Authorization: Bearer YOUR_MANUAL_TRIGGER_TOKEN" \
-  "https://cliproxy-feishu-monitor-worker.wanggejiancai822.workers.dev/admin/tick"
+  "https://cliproxy-feishu-monitor-worker.qingjiaowochangdaye.workers.dev/admin/tick"
 ```
 
 返回值可能包括：
