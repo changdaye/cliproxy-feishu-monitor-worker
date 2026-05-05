@@ -1,12 +1,16 @@
 import { parseConfig } from "./config";
 import { chunkItems } from "./lib/chunk";
 import { buildFailureAlertText, buildHeartbeatText, buildStartupText, buildSummaryText } from "./lib/message";
+import { getRunSettlementAction, shouldRetryChunk } from "./lib/run-settlement";
+import { shouldStartScheduledSummaryRun } from "./lib/schedule";
 import { parseStoredTokenUsage, parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
 import { authorizeAdminRequest } from "./lib/admin";
-import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, createRun, createChunks, markRunRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
+import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, getRunById, createRun, createChunks, markRunRunning, markRunAggregatingIfRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, markChunkQueuedForRetry, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
 import { CliProxyClient } from "./services/cliproxy";
 import { pushToFeishu, isRateLimitError } from "./services/feishu";
 import type { Env, MonitorChunkMessage } from "./types";
+
+const CHUNK_MAX_RETRIES = 3;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,14 +27,10 @@ function shouldSendByInterval(last: string | undefined, hours: number, now = new
   return now.getTime() >= previous.getTime() + hours * 60 * 60 * 1000;
 }
 
-async function maybeFinalizeRun(env: Env, now = new Date()): Promise<{ handled: boolean; state: string; runId?: string }> {
-  const run = await getIncompleteRun(env.MONITOR_DB);
+async function finalizeRunRecord(env: Env, runId: string, outcome: "finalize" | "fail", now = new Date()): Promise<{ handled: boolean; state: string; runId?: string }> {
+  const run = await getRunById(env.MONITOR_DB, runId);
   if (!run) return { handled: false, state: "idle" };
-  const counts = await countChunkStatuses(env.MONITOR_DB, run.id);
-  if ((counts.pending ?? 0) > 0 || (counts.queued ?? 0) > 0 || (counts.running ?? 0) > 0) {
-    return { handled: true, state: "waiting_for_chunks", runId: run.id };
-  }
-  if ((counts.failed ?? 0) > 0) {
+  if (outcome === "fail") {
     await markRunFailed(env.MONITOR_DB, run.id, "one or more chunks failed", now);
     return { handled: true, state: "run_failed", runId: run.id };
   }
@@ -48,6 +48,29 @@ async function maybeFinalizeRun(env: Env, now = new Date()): Promise<{ handled: 
   runtime.consecutiveFailures = 0;
   await setRuntimeStatus(env.MONITOR_DB, runtime, now);
   return { handled: true, state: "finalized", runId: run.id };
+}
+
+async function maybeSettleRun(env: Env, runId: string, now = new Date()): Promise<{ handled: boolean; state: string; runId?: string }> {
+  const run = await getRunById(env.MONITOR_DB, runId);
+  if (!run) return { handled: false, state: "idle" };
+  const counts = await countChunkStatuses(env.MONITOR_DB, run.id);
+  const outcome = getRunSettlementAction(counts);
+  if (outcome === "wait") {
+    return { handled: true, state: "waiting_for_chunks", runId: run.id };
+  }
+  if (run.status !== "aggregating") {
+    const locked = await markRunAggregatingIfRunning(env.MONITOR_DB, run.id);
+    if (!locked) {
+      return { handled: true, state: "waiting_for_settlement", runId: run.id };
+    }
+  }
+  return finalizeRunRecord(env, run.id, outcome, now);
+}
+
+async function maybeFinalizeRun(env: Env, now = new Date()): Promise<{ handled: boolean; state: string; runId?: string }> {
+  const run = await getIncompleteRun(env.MONITOR_DB);
+  if (!run) return { handled: false, state: "idle" };
+  return maybeSettleRun(env, run.id, now);
 }
 
 async function maybeSendStartup(env: Env, now = new Date()): Promise<boolean> {
@@ -74,7 +97,7 @@ async function maybeSendHeartbeat(env: Env, now = new Date()): Promise<boolean> 
 async function startRun(env: Env, client: CliProxyClient, triggerType: string, now = new Date(), force = false): Promise<{ started: boolean; runId?: string; authCount?: number; chunkCount?: number }> {
   const config = parseConfig(env);
   const runtime = await getRuntimeStatus(env.MONITOR_DB);
-  if (!force && !shouldSendByInterval(runtime.lastSummaryAt, config.summaryIntervalHours, now) && !(config.runSummaryOnStartup && !runtime.lastSummaryAt)) {
+  if (!force && !shouldStartScheduledSummaryRun(runtime.lastSummaryAt, now) && !(config.runSummaryOnStartup && !runtime.lastSummaryAt)) {
     return { started: false };
   }
   const auths = await client.loadCodexAuths();
@@ -122,18 +145,12 @@ async function handleFailure(env: Env, error: unknown, now = new Date()): Promis
 async function processChunkMessage(env: Env, message: MonitorChunkMessage, now = new Date()): Promise<void> {
   const client = new CliProxyClient(parseConfig(env));
   await markChunkRunning(env.MONITOR_DB, message.chunkId, now);
-  try {
-    const reports = [];
-    for (const item of message.accountItems) {
-      reports.push(await client.queryQuota(item));
-    }
-    await replaceQuotaReports(env.MONITOR_DB, message.runId, message.chunkId, reports, now);
-    await markChunkCompleted(env.MONITOR_DB, message.chunkId, now);
-  } catch (error) {
-    const text = error instanceof Error ? error.message : String(error);
-    await markChunkFailed(env.MONITOR_DB, message.chunkId, text, now);
-    throw error;
+  const reports = [];
+  for (const item of message.accountItems) {
+    reports.push(await client.queryQuota(item));
   }
+  await replaceQuotaReports(env.MONITOR_DB, message.runId, message.chunkId, reports, now);
+  await markChunkCompleted(env.MONITOR_DB, message.chunkId, now);
 }
 
 async function runTick(env: Env, options: { forceStart: boolean; includeStartup: boolean; includeHeartbeat: boolean; triggerType: string }, now = new Date()) {
@@ -227,9 +244,18 @@ export default {
     for (const message of batch.messages) {
       try {
         await processChunkMessage(env, message.body);
+        await maybeSettleRun(env, message.body.runId);
         message.ack();
-      } catch {
-        message.retry();
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (shouldRetryChunk(message.attempts, CHUNK_MAX_RETRIES)) {
+          await markChunkQueuedForRetry(env.MONITOR_DB, message.body.chunkId, text);
+          message.retry();
+          continue;
+        }
+        await markChunkFailed(env.MONITOR_DB, message.body.chunkId, text);
+        await maybeSettleRun(env, message.body.runId);
+        message.ack();
       }
     }
   }

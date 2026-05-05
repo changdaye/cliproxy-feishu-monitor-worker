@@ -1,5 +1,6 @@
 import type { MonitorConfig, RuntimeStatus, Summary } from "../types";
 import { formatNumberWithCommas } from "./value";
+import { getScheduledSummaryLabel } from "./schedule";
 
 export function buildSummaryText(summary: Summary, baseUrl: string, now = new Date()): string {
   const lines = [
@@ -29,7 +30,7 @@ export function buildHeartbeatText(state: RuntimeStatus, intervalHours: number):
 export function buildStartupText(config: MonitorConfig): string {
   return [
     "服务启动成功",
-    `汇总推送间隔: ${config.summaryIntervalHours}h`,
+    `汇总推送时间: ${getScheduledSummaryLabel()}`,
     `心跳间隔: ${config.heartbeatIntervalHours}h`,
     `启动后立即汇总: ${config.runSummaryOnStartup}`,
     `启动通知: ${config.startupNotificationEnabled}`

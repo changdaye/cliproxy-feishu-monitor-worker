@@ -41,6 +41,11 @@ export async function getIncompleteRun(db: D1Database): Promise<MonitorRunRecord
   return row ? mapRun(row) : undefined;
 }
 
+export async function getRunById(db: D1Database, runId: string): Promise<MonitorRunRecord | undefined> {
+  const row = await db.prepare("SELECT * FROM monitor_runs WHERE id = ? LIMIT 1").bind(runId).first<Record<string, unknown>>();
+  return row ? mapRun(row) : undefined;
+}
+
 export async function createRun(db: D1Database, input: { id: string; triggerType: string; authCount: number; chunkCount: number; usagePayloadJson: string; now?: Date }): Promise<void> {
   const timestamp = nowIso(input.now);
   await db
@@ -65,6 +70,11 @@ export async function markRunRunning(db: D1Database, runId: string): Promise<voi
   await db.prepare("UPDATE monitor_runs SET status = 'running' WHERE id = ?").bind(runId).run();
 }
 
+export async function markRunAggregatingIfRunning(db: D1Database, runId: string): Promise<boolean> {
+  const result = await db.prepare("UPDATE monitor_runs SET status = 'aggregating' WHERE id = ? AND status = 'running'").bind(runId).run();
+  return Number(result.meta.changes ?? 0) > 0;
+}
+
 export async function markRunFailed(db: D1Database, runId: string, errorMessage: string, now = new Date()): Promise<void> {
   await db
     .prepare("UPDATE monitor_runs SET status = 'failed', finished_at = ?, error_message = ? WHERE id = ?")
@@ -83,6 +93,13 @@ export async function markChunkCompleted(db: D1Database, chunkId: string, now = 
   await db
     .prepare("UPDATE monitor_chunks SET status = 'completed', finished_at = ?, error_message = NULL WHERE id = ?")
     .bind(nowIso(now), chunkId)
+    .run();
+}
+
+export async function markChunkQueuedForRetry(db: D1Database, chunkId: string, errorMessage: string): Promise<void> {
+  await db
+    .prepare("UPDATE monitor_chunks SET status = 'queued', finished_at = NULL, error_message = ? WHERE id = ?")
+    .bind(errorMessage, chunkId)
     .run();
 }
 
