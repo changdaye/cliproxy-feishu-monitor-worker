@@ -16,7 +16,8 @@ export function buildSummaryText(summary: Summary, baseUrl: string, now = new Da
   lines.push(
     `- 🟣 7小时 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.last7Hours)}`,
     `- 🔵 24小时 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.last24Hours)}`,
-    `- 🟦 7天 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.last7Days)} | 📚 累计 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.allTime)}`
+    `- 🟦 7天 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.last7Days)}`,
+    `- 📚 累计 Token 用量: ${formatNumberWithCommas(summary.tokenUsage.allTime)}`
   );
   return lines.join("\n");
 }

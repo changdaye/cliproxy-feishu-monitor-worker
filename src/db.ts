@@ -34,6 +34,25 @@ export async function setRuntimeStatus(db: D1Database, status: RuntimeStatus, no
     .run();
 }
 
+export async function getTokenUsageBaseline(db: D1Database): Promise<number> {
+  const row = await db.prepare("SELECT value_json FROM runtime_state WHERE key = ?").bind("token_usage_baseline").first<{ value_json: string }>();
+  if (!row?.value_json) return 0;
+  try {
+    const parsed = JSON.parse(row.value_json) as { allTime?: number };
+    return Number(parsed.allTime ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function setTokenUsageBaseline(db: D1Database, allTime: number, now = new Date()): Promise<void> {
+  await db
+    .prepare(`INSERT INTO runtime_state (key, value_json, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
+    .bind("token_usage_baseline", JSON.stringify({ allTime }), nowIso(now))
+    .run();
+}
+
 export async function getIncompleteRun(db: D1Database): Promise<MonitorRunRecord | undefined> {
   const row = await db
     .prepare("SELECT * FROM monitor_runs WHERE status IN ('pending', 'running', 'aggregating') ORDER BY started_at DESC LIMIT 1")

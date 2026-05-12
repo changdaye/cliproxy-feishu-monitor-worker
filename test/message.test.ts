@@ -34,14 +34,15 @@ describe("buildSummaryText", () => {
     const text = buildSummaryText(makeSummary(), "https://example.com", new Date("2026-04-23T10:00:00.000Z"));
     const lines = text.split("\n");
 
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(8);
     expect(lines[0]).toBe("- 📊 状态概况");
     expect(lines[1]).toBe("- 📦 账号总数 12 | 🟢 可用 11 | 🟩 充足 3 | 🟦 高 2 | 🟨 中 4 | 🟧 低 1 | 🟥 耗尽 1 | ⚫️ 禁用 1");
     expect(lines[2]).toBe("- 📈 汇总");
     expect(lines[3]).toBe("- 🧮 7日免费等效: 68%");
     expect(lines[4]).toBe("- 🟣 7小时 Token 用量: 1,234");
     expect(lines[5]).toBe("- 🔵 24小时 Token 用量: 5,678");
-    expect(lines[6]).toBe("- 🟦 7天 Token 用量: 9,012 | 📚 累计 Token 用量: 123,456");
+    expect(lines[6]).toBe("- 🟦 7天 Token 用量: 9,012");
+    expect(lines[7]).toBe("- 📚 累计 Token 用量: 123,456");
     expect(text).not.toContain("来源:");
     expect(text).not.toContain("时间:");
   });

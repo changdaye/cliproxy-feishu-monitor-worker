@@ -5,7 +5,7 @@ import { getRunSettlementAction, shouldRetryChunk } from "./lib/run-settlement";
 import { shouldStartScheduledSummaryRun } from "./lib/schedule";
 import { parseStoredTokenUsage, parseTokenUsageByAuth, parseUsageQueueRecords, summarizeReports, summarizeUsageRecords } from "./lib/quota";
 import { authorizeAdminRequest } from "./lib/admin";
-import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, getRunById, createRun, createChunks, markRunRunning, markRunAggregatingIfRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, markChunkQueuedForRetry, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed, insertUsageRecords, listUsageRecords } from "./db";
+import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, getRunById, createRun, createChunks, markRunRunning, markRunAggregatingIfRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, markChunkQueuedForRetry, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed, insertUsageRecords, listUsageRecords, getTokenUsageBaseline } from "./db";
 import { CliProxyClient, ManagementApiError } from "./services/cliproxy";
 import { pushToFeishu, isRateLimitError } from "./services/feishu";
 import type { Env, MonitorChunkMessage } from "./types";
@@ -37,6 +37,7 @@ async function finalizeRunRecord(env: Env, runId: string, outcome: "finalize" | 
   const reports = await listReportsForRun(env.MONITOR_DB, run.id);
   const tokenUsage = parseStoredTokenUsage(run.usagePayloadJson, now);
   const summary = summarizeReports(reports, tokenUsage);
+  summary.tokenUsage.allTime += await getTokenUsageBaseline(env.MONITOR_DB);
   const config = parseConfig(env);
   const message = buildSummaryText(summary, config.baseUrl, now);
   await pushToFeishu(config, message);
