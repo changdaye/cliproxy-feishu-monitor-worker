@@ -3,10 +3,10 @@ import { chunkItems } from "./lib/chunk";
 import { buildFailureAlertText, buildHeartbeatText, buildStartupText, buildSummaryText } from "./lib/message";
 import { getRunSettlementAction, shouldRetryChunk } from "./lib/run-settlement";
 import { shouldStartScheduledSummaryRun } from "./lib/schedule";
-import { parseStoredTokenUsage, parseTokenUsageByAuth, summarizeReports } from "./lib/quota";
+import { parseStoredTokenUsage, parseTokenUsageByAuth, parseUsageQueueRecords, summarizeReports, summarizeUsageRecords } from "./lib/quota";
 import { authorizeAdminRequest } from "./lib/admin";
-import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, getRunById, createRun, createChunks, markRunRunning, markRunAggregatingIfRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, markChunkQueuedForRetry, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed } from "./db";
-import { CliProxyClient } from "./services/cliproxy";
+import { getRuntimeStatus, setRuntimeStatus, getIncompleteRun, getRunById, createRun, createChunks, markRunRunning, markRunAggregatingIfRunning, countChunkStatuses, listReportsForRun, finalizeRun, markChunkRunning, markChunkQueuedForRetry, replaceQuotaReports, markChunkCompleted, markChunkFailed, markRunFailed, insertUsageRecords, listUsageRecords } from "./db";
+import { CliProxyClient, ManagementApiError } from "./services/cliproxy";
 import { pushToFeishu, isRateLimitError } from "./services/feishu";
 import type { Env, MonitorChunkMessage } from "./types";
 
@@ -94,6 +94,35 @@ async function maybeSendHeartbeat(env: Env, now = new Date()): Promise<boolean> 
   return true;
 }
 
+async function syncPersistedTokenUsage(env: Env, client: CliProxyClient, now = new Date()): Promise<void> {
+  try {
+    const usageRecords = parseUsageQueueRecords(await client.fetchUsageQueueRecords());
+    await insertUsageRecords(env.MONITOR_DB, usageRecords, now);
+    return;
+  } catch (queueError) {
+    if (queueError instanceof ManagementApiError && queueError.kind === "html") {
+      throw queueError;
+    }
+  }
+}
+
+async function currentTokenUsage(env: Env, client: CliProxyClient, now = new Date()) {
+  const persisted = summarizeUsageRecords(await listUsageRecords(env.MONITOR_DB), now);
+  if (Object.keys(persisted.byAuth).length > 0) {
+    return persisted;
+  }
+
+  try {
+    const usagePayload = await client.fetchUsagePayload();
+    return parseTokenUsageByAuth(usagePayload, now);
+  } catch (legacyError) {
+    if (legacyError instanceof ManagementApiError && legacyError.kind === "html") {
+      throw legacyError;
+    }
+  }
+  return persisted;
+}
+
 async function startRun(env: Env, client: CliProxyClient, triggerType: string, now = new Date(), force = false): Promise<{ started: boolean; runId?: string; authCount?: number; chunkCount?: number }> {
   const config = parseConfig(env);
   const runtime = await getRuntimeStatus(env.MONITOR_DB);
@@ -101,8 +130,7 @@ async function startRun(env: Env, client: CliProxyClient, triggerType: string, n
     return { started: false };
   }
   const auths = await client.loadCodexAuths();
-  const usagePayload = await client.fetchUsagePayload();
-  const tokenUsage = parseTokenUsageByAuth(usagePayload, now);
+  const tokenUsage = await currentTokenUsage(env, client, now);
   const chunks = chunkItems(auths, config.chunkSize);
   const runId = crypto.randomUUID();
   const messages: MonitorChunkMessage[] = chunks.map((chunk, index) => ({
@@ -172,6 +200,8 @@ async function runTick(env: Env, options: { forceStart: boolean; includeStartup:
     result.heartbeatSent = await maybeSendHeartbeat(env, now);
     if (result.heartbeatSent) await sleep(1500);
   }
+
+  await syncPersistedTokenUsage(env, client, now);
 
   const finalized = await maybeFinalizeRun(env, now);
   if (finalized.handled) {

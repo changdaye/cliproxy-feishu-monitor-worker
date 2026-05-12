@@ -30,13 +30,33 @@ function makeSummary(): Summary {
 }
 
 describe("buildSummaryText", () => {
-  it("omits source and time so the summary starts with account totals", () => {
+  it("keeps account statistics compact on a single line", () => {
     const text = buildSummaryText(makeSummary(), "https://example.com", new Date("2026-04-23T10:00:00.000Z"));
     const lines = text.split("\n");
 
-    expect(lines[0]).toBe("状态概况");
-    expect(lines[1]).toBe("账号总数 12 | 充足 3 | 高 2 | 中 4 | 低 1 | 耗尽 1 | 禁用 1");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe("📊 账号12 | 🟢可用11 | 🟩充足3 | 🟦高2 | 🟨中4 | 🟧低1 | 🟥耗尽1 | ⚫️禁用1");
+    expect(lines[1]).toBe("📈 7d免费等效68% | 🟣7h 1,234 | 🔵24h 5,678 | 🟦7d 9,012 | 📚累计 123,456");
     expect(text).not.toContain("来源:");
     expect(text).not.toContain("时间:");
+  });
+
+  it("shows a compact unavailable-token hint instead of misleading zeros", () => {
+    const text = buildSummaryText({
+      ...makeSummary(),
+      tokenUsage: {
+        available: false,
+        allTime: 0,
+        last7Hours: 0,
+        last24Hours: 0,
+        last7Days: 0,
+        complete7Hours: false,
+        complete24Hours: false,
+        complete7Days: false
+      }
+    }, "https://example.com", new Date("2026-04-23T10:00:00.000Z"));
+
+    expect(text).toContain("📈 7d免费等效68% | ⚪ Token暂无数据");
+    expect(text).not.toContain("7小时 Token 用量: 0");
   });
 });

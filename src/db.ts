@@ -1,4 +1,4 @@
-import type { AuthItem, MonitorChunkMessage, MonitorRunRecord, QuotaReport, RuntimeStatus, Summary } from "./types";
+import type { MonitorChunkMessage, MonitorRunRecord, QuotaReport, RuntimeStatus, Summary, UsageRecord } from "./types";
 
 function nowIso(now = new Date()): string {
   return now.toISOString();
@@ -163,4 +163,72 @@ export async function finalizeRun(db: D1Database, runId: string, summary: Summar
     .prepare("UPDATE monitor_runs SET status = 'completed', finished_at = ?, summary_json = ?, feishu_message_text = ?, error_message = NULL WHERE id = ?")
     .bind(nowIso(now), JSON.stringify(summary), message, runId)
     .run();
+}
+
+function usageRecordId(record: UsageRecord): string {
+  return record.requestId
+    ? `request:${record.requestId}`
+    : [
+        record.timestamp,
+        record.authIndex,
+        record.provider ?? "",
+        record.model ?? "",
+        record.endpoint ?? "",
+        record.totalTokens,
+        record.inputTokens,
+        record.outputTokens,
+        record.reasoningTokens,
+        record.cachedTokens,
+        record.failed ? 1 : 0
+      ].join("|");
+}
+
+export async function insertUsageRecords(db: D1Database, records: UsageRecord[], now = new Date()): Promise<void> {
+  if (records.length === 0) return;
+  const timestamp = nowIso(now);
+  const statements = records.map((record) =>
+    db
+      .prepare(`INSERT OR IGNORE INTO usage_records (
+        id, auth_index, timestamp, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, provider, model, alias, endpoint, auth_type, request_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        usageRecordId(record),
+        record.authIndex,
+        record.timestamp,
+        record.inputTokens,
+        record.outputTokens,
+        record.reasoningTokens,
+        record.cachedTokens,
+        record.totalTokens,
+        record.failed ? 1 : 0,
+        record.provider ?? "",
+        record.model ?? "",
+        record.alias ?? "",
+        record.endpoint ?? "",
+        record.authType ?? "",
+        record.requestId ?? "",
+        timestamp
+      )
+  );
+  await db.batch(statements);
+}
+
+export async function listUsageRecords(db: D1Database): Promise<UsageRecord[]> {
+  const rows = await db.prepare("SELECT * FROM usage_records ORDER BY timestamp ASC").all<Record<string, unknown>>();
+  return rows.results.map((row) => ({
+    authIndex: String(row.auth_index ?? ""),
+    timestamp: String(row.timestamp ?? ""),
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
+    reasoningTokens: Number(row.reasoning_tokens ?? 0),
+    cachedTokens: Number(row.cached_tokens ?? 0),
+    totalTokens: Number(row.total_tokens ?? 0),
+    failed: Number(row.failed ?? 0) === 1,
+    provider: row.provider ? String(row.provider) : undefined,
+    model: row.model ? String(row.model) : undefined,
+    alias: row.alias ? String(row.alias) : undefined,
+    endpoint: row.endpoint ? String(row.endpoint) : undefined,
+    authType: row.auth_type ? String(row.auth_type) : undefined,
+    requestId: row.request_id ? String(row.request_id) : undefined
+  }));
 }

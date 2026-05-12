@@ -1,5 +1,5 @@
 import { cleanString, clampFloat, firstValue, numberFromAny, boolFromAny } from "./value";
-import type { QuotaReport, QuotaWindow, Summary, TokenUsageResult, TokenUsageSummary } from "../types";
+import type { QuotaReport, QuotaWindow, Summary, TokenUsageResult, TokenUsageSummary, UsageRecord } from "../types";
 
 const WINDOW_5H_SECONDS = 5 * 60 * 60;
 const WINDOW_7D_SECONDS = 7 * 24 * 60 * 60;
@@ -82,6 +82,7 @@ export function parseQuotaWindows(payload: Record<string, unknown>): { windows: 
 
 export function deriveStatus(report: QuotaReport): string {
   if (report.disabled) return "disabled";
+  if (report.unavailable) return "unavailable";
   if (report.error) return "error";
   if (!report.authIndex || !report.accountId) return "missing";
   const window7d = report.windows.find((window) => window.id === "code-7d");
@@ -108,19 +109,19 @@ function tokenTotalFromDetail(detail: Record<string, unknown>): number {
   const input = numberFromAny(firstValue(tokens.input_tokens, tokens.inputTokens, tokens.prompt_tokens, tokens.promptTokens));
   const output = numberFromAny(firstValue(tokens.output_tokens, tokens.outputTokens, tokens.completion_tokens, tokens.completionTokens));
   const reasoning = numberFromAny(firstValue(tokens.reasoning_tokens, tokens.reasoningTokens));
+  const cached = numberFromAny(firstValue(tokens.cached_tokens, tokens.cachedTokens));
   const total = numberFromAny(firstValue(tokens.total_tokens, tokens.totalTokens));
-  return total > 0 ? total : input + output + reasoning;
+  if (total > 0) return total;
+  const visible = input + output + reasoning;
+  return visible > 0 ? visible : input + output + reasoning + cached;
 }
 
-export function parseTokenUsageByAuth(payload: Record<string, unknown>, now = new Date()): TokenUsageResult {
-  const usage = payload.usage;
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
-    return { byAuth: {}, complete7Hours: false, complete24Hours: false, complete7Days: false };
-  }
-  const apis = (usage as Record<string, unknown>).apis;
-  if (!apis || typeof apis !== "object" || Array.isArray(apis)) {
-    return { byAuth: {}, complete7Hours: false, complete24Hours: false, complete7Days: false };
-  }
+export function emptyTokenUsageResult(): TokenUsageResult {
+  return { byAuth: {}, complete7Hours: false, complete24Hours: false, complete7Days: false };
+}
+
+function summarizeUsageEntries(entries: Array<{ authIndex: string; timestamp: Date; totalTokens: number }>, now = new Date()): TokenUsageResult {
+  if (entries.length === 0) return emptyTokenUsageResult();
   const byAuth: Record<string, TokenUsageSummary> = {};
   let historyStart: Date | undefined;
   let historyEnd: Date | undefined;
@@ -128,39 +129,24 @@ export function parseTokenUsageByAuth(payload: Record<string, unknown>, now = ne
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  for (const apiValue of Object.values(apis as Record<string, unknown>)) {
-    if (!apiValue || typeof apiValue !== "object" || Array.isArray(apiValue)) continue;
-    const models = (apiValue as Record<string, unknown>).models;
-    if (!models || typeof models !== "object" || Array.isArray(models)) continue;
-    for (const modelValue of Object.values(models as Record<string, unknown>)) {
-      if (!modelValue || typeof modelValue !== "object" || Array.isArray(modelValue)) continue;
-      const details = ((modelValue as Record<string, unknown>).details ?? []) as unknown[];
-      for (const detailValue of details) {
-        if (!detailValue || typeof detailValue !== "object" || Array.isArray(detailValue)) continue;
-        const detail = detailValue as Record<string, unknown>;
-        const authIndex = cleanString(firstValue(detail.auth_index, detail.authIndex));
-        const timestamp = parseTimestamp(detail.timestamp);
-        if (!authIndex || !timestamp) continue;
-        historyStart = !historyStart || timestamp < historyStart ? timestamp : historyStart;
-        historyEnd = !historyEnd || timestamp > historyEnd ? timestamp : historyEnd;
-        const total = tokenTotalFromDetail(detail);
-        const current = byAuth[authIndex] ?? {
-          available: true,
-          allTime: 0,
-          last7Hours: 0,
-          last24Hours: 0,
-          last7Days: 0,
-          complete7Hours: false,
-          complete24Hours: false,
-          complete7Days: false
-        };
-        current.allTime += total;
-        if (timestamp >= last7Hours) current.last7Hours += total;
-        if (timestamp >= last24Hours) current.last24Hours += total;
-        if (timestamp >= last7Days) current.last7Days += total;
-        byAuth[authIndex] = current;
-      }
-    }
+  for (const entry of entries) {
+    historyStart = !historyStart || entry.timestamp < historyStart ? entry.timestamp : historyStart;
+    historyEnd = !historyEnd || entry.timestamp > historyEnd ? entry.timestamp : historyEnd;
+    const current = byAuth[entry.authIndex] ?? {
+      available: true,
+      allTime: 0,
+      last7Hours: 0,
+      last24Hours: 0,
+      last7Days: 0,
+      complete7Hours: false,
+      complete24Hours: false,
+      complete7Days: false
+    };
+    current.allTime += entry.totalTokens;
+    if (entry.timestamp >= last7Hours) current.last7Hours += entry.totalTokens;
+    if (entry.timestamp >= last24Hours) current.last24Hours += entry.totalTokens;
+    if (entry.timestamp >= last7Days) current.last7Days += entry.totalTokens;
+    byAuth[entry.authIndex] = current;
   }
 
   const result: TokenUsageResult = {
@@ -183,9 +169,88 @@ export function parseTokenUsageByAuth(payload: Record<string, unknown>, now = ne
   return result;
 }
 
+export function summarizeUsageRecords(records: UsageRecord[], now = new Date()): TokenUsageResult {
+  return summarizeUsageEntries(
+    records
+      .map((record) => ({
+        authIndex: cleanString(record.authIndex),
+        timestamp: parseTimestamp(record.timestamp),
+        totalTokens: Math.max(0, numberFromAny(record.totalTokens))
+      }))
+      .filter((record): record is { authIndex: string; timestamp: Date; totalTokens: number } => !!record.authIndex && !!record.timestamp),
+    now
+  );
+}
+
+export function parseUsageQueueRecords(payload: unknown): UsageRecord[] {
+  if (!Array.isArray(payload)) return [];
+  const records: UsageRecord[] = [];
+  for (const entryValue of payload) {
+    if (!entryValue || typeof entryValue !== "object" || Array.isArray(entryValue)) continue;
+    const entry = entryValue as Record<string, unknown>;
+    const authIndex = cleanString(firstValue(entry.auth_index, entry.authIndex));
+    const timestamp = parseTimestamp(entry.timestamp);
+    if (!authIndex || !timestamp) continue;
+    const tokens = entry.tokens && typeof entry.tokens === "object" && !Array.isArray(entry.tokens)
+      ? entry.tokens as Record<string, unknown>
+      : entry;
+    records.push({
+      authIndex,
+      timestamp: timestamp.toISOString(),
+      inputTokens: numberFromAny(firstValue(tokens.input_tokens, tokens.inputTokens)),
+      outputTokens: numberFromAny(firstValue(tokens.output_tokens, tokens.outputTokens)),
+      reasoningTokens: numberFromAny(firstValue(tokens.reasoning_tokens, tokens.reasoningTokens)),
+      cachedTokens: numberFromAny(firstValue(tokens.cached_tokens, tokens.cachedTokens)),
+      totalTokens: tokenTotalFromDetail(entry),
+      failed: boolFromAny(entry.failed),
+      provider: cleanString(entry.provider),
+      model: cleanString(entry.model),
+      alias: cleanString(entry.alias),
+      endpoint: cleanString(entry.endpoint),
+      authType: cleanString(firstValue(entry.auth_type, entry.authType)),
+      requestId: cleanString(firstValue(entry.request_id, entry.requestId))
+    });
+  }
+  return records;
+}
+
+export function parseTokenUsageByAuth(payload: Record<string, unknown> | unknown[], now = new Date()): TokenUsageResult {
+  if (Array.isArray(payload)) {
+    return summarizeUsageRecords(parseUsageQueueRecords(payload), now);
+  }
+  const usage = payload.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return emptyTokenUsageResult();
+  }
+  const apis = (usage as Record<string, unknown>).apis;
+  if (!apis || typeof apis !== "object" || Array.isArray(apis)) {
+    return emptyTokenUsageResult();
+  }
+  const entries: Array<{ authIndex: string; timestamp: Date; totalTokens: number }> = [];
+
+  for (const apiValue of Object.values(apis as Record<string, unknown>)) {
+    if (!apiValue || typeof apiValue !== "object" || Array.isArray(apiValue)) continue;
+    const models = (apiValue as Record<string, unknown>).models;
+    if (!models || typeof models !== "object" || Array.isArray(models)) continue;
+    for (const modelValue of Object.values(models as Record<string, unknown>)) {
+      if (!modelValue || typeof modelValue !== "object" || Array.isArray(modelValue)) continue;
+      const details = ((modelValue as Record<string, unknown>).details ?? []) as unknown[];
+      for (const detailValue of details) {
+        if (!detailValue || typeof detailValue !== "object" || Array.isArray(detailValue)) continue;
+        const detail = detailValue as Record<string, unknown>;
+        const authIndex = cleanString(firstValue(detail.auth_index, detail.authIndex));
+        const timestamp = parseTimestamp(detail.timestamp);
+        if (!authIndex || !timestamp) continue;
+        entries.push({ authIndex, timestamp, totalTokens: tokenTotalFromDetail(detail) });
+      }
+    }
+  }
+  return summarizeUsageEntries(entries, now);
+}
+
 export function parseStoredTokenUsage(stored: string | undefined, now = new Date()): TokenUsageResult {
   if (!stored) {
-    return { byAuth: {}, complete7Hours: false, complete24Hours: false, complete7Days: false };
+    return emptyTokenUsageResult();
   }
 
   const parsed = JSON.parse(stored) as Record<string, unknown>;

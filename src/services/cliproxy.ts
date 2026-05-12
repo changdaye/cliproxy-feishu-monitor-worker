@@ -88,6 +88,10 @@ function isAuthDisabled(entry: Record<string, unknown>): boolean {
   return Boolean(entry.disabled) || cleanString(entry.status).toLowerCase() === "disabled";
 }
 
+function isAuthUnavailable(entry: Record<string, unknown>): boolean {
+  return Boolean(entry.unavailable);
+}
+
 function authName(entry: Record<string, unknown>): string {
   return cleanString(firstValue(entry.email, entry.account, entry.label, entry.name, entry.id)) || "unknown";
 }
@@ -98,8 +102,35 @@ export function mapAuthEntry(entry: Record<string, unknown>): AuthItem {
     accountId: parseAccountId(entry),
     name: authName(entry),
     disabled: isAuthDisabled(entry),
+    unavailable: isAuthUnavailable(entry),
     planType: parsePlanType(entry)
   };
+}
+
+export class ManagementApiError extends Error {
+  readonly status?: number;
+  readonly url: string;
+  readonly kind: "http" | "html" | "non-json";
+
+  constructor(
+    message: string,
+    options: {
+      status?: number;
+      url: string;
+      kind: "http" | "html" | "non-json";
+    }
+  ) {
+    super(message);
+    this.name = "ManagementApiError";
+    this.status = options.status;
+    this.url = options.url;
+    this.kind = options.kind;
+  }
+}
+
+function looksLikeHtml(text: string): boolean {
+  const trimmed = text.trimStart().slice(0, 256).toLowerCase();
+  return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html");
 }
 
 export class CliProxyClient {
@@ -116,7 +147,23 @@ export class CliProxyClient {
   }
 
   async fetchUsagePayload(): Promise<Record<string, unknown>> {
-    return this.fetchJson(`${this.config.baseUrl}/v0/management/usage`);
+    return this.fetchJsonValue<Record<string, unknown>>(`${this.config.baseUrl}/v0/management/usage`);
+  }
+
+  async fetchUsageQueueRecords(count = 1000, maxPages = 10): Promise<unknown[]> {
+    const records: unknown[] = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const payload = await this.fetchJsonValue<unknown>(`${this.config.baseUrl}/v0/management/usage-queue?count=${count}`);
+      if (!Array.isArray(payload)) {
+        throw new ManagementApiError("unexpected usage-queue payload from management API", {
+          kind: "non-json",
+          url: `${this.config.baseUrl}/v0/management/usage-queue?count=${count}`
+        });
+      }
+      records.push(...payload);
+      if (payload.length < count) break;
+    }
+    return records;
   }
 
   async queryQuota(item: AuthItem): Promise<QuotaReport> {
@@ -126,6 +173,7 @@ export class CliProxyClient {
       accountId: item.accountId,
       planType: item.planType,
       disabled: item.disabled,
+      unavailable: item.unavailable,
       status: "unknown",
       windows: [],
       additionalWindows: [],
@@ -133,6 +181,11 @@ export class CliProxyClient {
     };
 
     if (report.disabled) {
+      report.status = deriveStatus(report);
+      return report;
+    }
+    if (report.unavailable) {
+      report.error = "auth marked unavailable by management API";
       report.status = deriveStatus(report);
       return report;
     }
@@ -170,17 +223,7 @@ export class CliProxyClient {
   }
 
   private async fetchJson(url: string): Promise<Record<string, unknown>> {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${this.config.managementKey}`
-      },
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs)
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`management API HTTP ${response.status}: ${text.trim()}`);
-    }
-    return JSON.parse(text) as Record<string, unknown>;
+    return this.fetchJsonValue<Record<string, unknown>>(url);
   }
 
   private async postJson(url: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -195,8 +238,58 @@ export class CliProxyClient {
     });
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`management API HTTP ${response.status}: ${text.trim()}`);
+      throw new ManagementApiError(`management API HTTP ${response.status}: ${text.trim()}`, {
+        status: response.status,
+        url,
+        kind: "http"
+      });
     }
-    return JSON.parse(text) as Record<string, unknown>;
+    try {
+      if (looksLikeHtml(text)) {
+        throw new ManagementApiError(
+          `management API returned HTML for ${new URL(url).pathname}; CPA_BASE_URL likely points to a CPAMC/control-panel page instead of the CLIProxyAPI management API origin`,
+          { url, kind: "html" }
+        );
+      }
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof ManagementApiError) throw error;
+      throw new ManagementApiError(`management API returned non-JSON from ${new URL(url).pathname}`, {
+        url,
+        kind: "non-json"
+      });
+    }
+  }
+
+  private async fetchJsonValue<T>(url: string): Promise<T> {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.config.managementKey}`
+      },
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs)
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new ManagementApiError(`management API HTTP ${response.status}: ${text.trim()}`, {
+        status: response.status,
+        url,
+        kind: "http"
+      });
+    }
+    try {
+      if (looksLikeHtml(text)) {
+        throw new ManagementApiError(
+          `management API returned HTML for ${new URL(url).pathname}; CPA_BASE_URL likely points to a CPAMC/control-panel page instead of the CLIProxyAPI management API origin`,
+          { url, kind: "html" }
+        );
+      }
+      return JSON.parse(text) as T;
+    } catch (error) {
+      if (error instanceof ManagementApiError) throw error;
+      throw new ManagementApiError(`management API returned non-JSON from ${new URL(url).pathname}`, {
+        url,
+        kind: "non-json"
+      });
+    }
   }
 }

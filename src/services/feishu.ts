@@ -7,6 +7,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type FeishuPayload = Record<string, unknown> & {
+  msg_type: string;
+  content: {
+    text: string;
+  };
+};
+
 export function isRateLimitError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return /\b11232\b/.test(error.message) || /HTTP 429\b/.test(error.message);
@@ -45,8 +52,8 @@ async function sendOnce(config: MonitorConfig, text: string): Promise<void> {
   }
 }
 
-async function buildPayload(text: string, secret: string) {
-  const payload: Record<string, unknown> = {
+export async function buildPayload(text: string, secret: string): Promise<FeishuPayload> {
+  const payload: FeishuPayload = {
     msg_type: "text",
     content: { text }
   };

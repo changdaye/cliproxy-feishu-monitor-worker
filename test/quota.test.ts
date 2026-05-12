@@ -41,6 +41,7 @@ describe("mapAuthEntry", () => {
       accountId: "acc-123",
       name: "a@example.com",
       disabled: false,
+      unavailable: false,
       planType: "free"
     });
   });
@@ -67,6 +68,39 @@ describe("parseTokenUsageByAuth", () => {
 
     expect(result.byAuth.a.allTime).toBe(30);
     expect(result.byAuth.a.last7Hours).toBe(30);
+  });
+
+  it("supports CLIProxyAPI usage-queue array payloads", () => {
+    const result = parseTokenUsageByAuth([
+      {
+        auth_index: "a",
+        timestamp: "2026-04-22T00:00:00.000Z",
+        tokens: {
+          input_tokens: 12,
+          output_tokens: 3,
+          reasoning_tokens: 5
+        }
+      },
+      {
+        auth_index: "a",
+        timestamp: "2026-04-22T01:00:00.000Z",
+        tokens: {
+          total_tokens: 10
+        }
+      },
+      {
+        auth_index: "b",
+        timestamp: "2026-04-21T12:00:00.000Z",
+        tokens: {
+          total_tokens: 7
+        }
+      }
+    ], new Date("2026-04-22T02:00:00.000Z"));
+
+    expect(result.byAuth.a.allTime).toBe(30);
+    expect(result.byAuth.a.last7Hours).toBe(30);
+    expect(result.byAuth.b.allTime).toBe(7);
+    expect(result.historyStart).toBe("2026-04-21T12:00:00.000Z");
   });
 });
 

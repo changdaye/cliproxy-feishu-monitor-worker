@@ -35,6 +35,7 @@ export interface AuthItem {
   accountId: string;
   name: string;
   disabled: boolean;
+  unavailable?: boolean;
   planType: string;
 }
 
@@ -62,6 +63,7 @@ export interface QuotaReport {
   accountId: string;
   planType: string;
   disabled: boolean;
+  unavailable?: boolean;
   status: string;
   windows: QuotaWindow[];
   additionalWindows: QuotaWindow[];
@@ -97,6 +99,23 @@ export interface TokenUsageResult {
   complete7Hours: boolean;
   complete24Hours: boolean;
   complete7Days: boolean;
+}
+
+export interface UsageRecord {
+  authIndex: string;
+  timestamp: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  failed: boolean;
+  provider?: string;
+  model?: string;
+  alias?: string;
+  endpoint?: string;
+  authType?: string;
+  requestId?: string;
 }
 
 export interface MonitorRunRecord {
