@@ -5,11 +5,11 @@ import { getScheduledSummaryLabel } from "./schedule";
 export function buildSummaryText(summary: Summary, baseUrl: string, now = new Date()): string {
   const lines = [buildSnapshotLine(summary)];
   if (!summary.tokenUsage.available) {
-    lines.push(`📈 7d免费等效${summary.freeEquivalent7D.toFixed(0)}% | ⚪ Token暂无数据`);
+    lines.push(`📈 Token | 7d免费等效 ${summary.freeEquivalent7D.toFixed(0)}% | ⚪ 暂无数据`);
     return lines.join("\n");
   }
   lines.push(
-    `📈 7d免费等效${summary.freeEquivalent7D.toFixed(0)}% | 🟣7h ${formatNumberWithCommas(summary.tokenUsage.last7Hours)} | 🔵24h ${formatNumberWithCommas(summary.tokenUsage.last24Hours)} | 🟦7d ${formatNumberWithCommas(summary.tokenUsage.last7Days)} | 📚累计 ${formatNumberWithCommas(summary.tokenUsage.allTime)}`
+    `📈 Token | 7d免费等效 ${summary.freeEquivalent7D.toFixed(0)}% | 🟣 7h ${formatNumberWithCommas(summary.tokenUsage.last7Hours)} | 🔵 24h ${formatNumberWithCommas(summary.tokenUsage.last24Hours)} | 🟦 7d ${formatNumberWithCommas(summary.tokenUsage.last7Days)} | 📚 累计 ${formatNumberWithCommas(summary.tokenUsage.allTime)}`
   );
   return lines.join("\n");
 }
@@ -38,8 +38,8 @@ function buildSnapshotLine(summary: Summary): string {
     + (summary.statusCounts.exhausted ?? 0);
   const abnormalCount = (summary.statusCounts.error ?? 0) + (summary.statusCounts.missing ?? 0) + (summary.statusCounts.unavailable ?? 0);
   const abnormal = abnormalCount > 0
-    ? ` | 🚨异常${abnormalCount}`
+    ? ` | 🚨 异常 ${abnormalCount}`
     : "";
-  const disabledText = summary.statusCounts.disabled ? ` | ⚫️禁用${summary.statusCounts.disabled}` : "";
-  return `📊 账号${summary.accounts} | 🟢可用${available} | 🟩充足${summary.statusCounts.full ?? 0} | 🟦高${summary.statusCounts.high ?? 0} | 🟨中${summary.statusCounts.medium ?? 0} | 🟧低${summary.statusCounts.low ?? 0} | 🟥耗尽${summary.statusCounts.exhausted ?? 0}${disabledText}${abnormal}`;
+  const disabledText = summary.statusCounts.disabled ? ` | ⚫️ 禁用 ${summary.statusCounts.disabled}` : "";
+  return `📊 账号总数 ${summary.accounts} | 🟢 可用 ${available} | 🟩 充足 ${summary.statusCounts.full ?? 0} | 🟦 高 ${summary.statusCounts.high ?? 0} | 🟨 中 ${summary.statusCounts.medium ?? 0} | 🟧 低 ${summary.statusCounts.low ?? 0} | 🟥 耗尽 ${summary.statusCounts.exhausted ?? 0}${disabledText}${abnormal}`;
 }
