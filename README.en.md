@@ -11,7 +11,7 @@ A **Cloudflare Workers + Queues + D1** project for monitoring CLIProxyAPI quota 
 - **No dedicated server required**
 - **Queue-based sharding** for monitoring large account sets
 - **D1 persistence** for runs, chunks, quota reports, and runtime state
-- **Feishu notifications** for summaries, heartbeats, and failures
+- **Feishu notifications** at `09:00 / 12:00 / 19:00` Asia/Shanghai with token usage, heartbeat, and failure details
 - **Manual control endpoint** for on-demand polling
 - **Expandable** toward Tunnel, Access, and custom domains later
 
@@ -25,6 +25,8 @@ Responsible for:
 - creating new monitoring runs
 - checking whether active runs are complete
 - finalizing summaries and pushing Feishu messages
+
+The default schedule is `09:00 / 12:00 / 19:00` in Asia/Shanghai (Cloudflare Cron `01:00 / 04:00 / 11:00` UTC).
 
 ### `queue consumer`
 Responsible for:

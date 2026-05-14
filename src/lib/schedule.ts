@@ -1,5 +1,5 @@
 const SHANGHAI_TIMEZONE = "Asia/Shanghai";
-const SUMMARY_SLOTS_MINUTES = [7 * 60, 12 * 60, 19 * 60] as const;
+const SUMMARY_SLOTS_MINUTES = [9 * 60, 12 * 60, 19 * 60] as const;
 const PREFETCH_LEAD_MINUTES = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -44,5 +44,5 @@ export function shouldStartScheduledSummaryRun(lastSummaryAt: string | undefined
 }
 
 export function getScheduledSummaryLabel(): string {
-  return "07:00 / 12:00 / 19:00 (Asia/Shanghai)";
+  return "09:00 / 12:00 / 19:00 (Asia/Shanghai)";
 }
